@@ -29,7 +29,7 @@ void ConfigManager::init() {
     // eFuse MAC 주소를 읽어 기본 device_id 생성 (예: ESP32_89BACD)
     uint64_t chipid = ESP.getEfuseMac();
     char id_buf[16];
-    snprintf(id_buf, sizeof(id_buf), "ESP32_%04X%08X", "ESP32_%06X", (uint32_t)chipid & 0xFFFFFF);
+    snprintf(id_buf, sizeof(id_buf), "ESP32_%06lX", (uint32_t)chipid & 0xFFFFFF);
     _deviceId = String(id_buf);
 
     // 기본값 초기화
