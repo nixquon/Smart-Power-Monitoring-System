@@ -55,6 +55,8 @@ private:
     ConfigManager& _configMgr;
     ConnectManager& _connectMgr;
 
+     String _serverHost;
+
     WiFiClient _wifiClient;
     PubSubClient _mqttClient;
     PowerCommandCallback _powerCmdCallback;

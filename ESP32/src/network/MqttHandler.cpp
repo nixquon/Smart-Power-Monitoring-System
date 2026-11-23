@@ -28,12 +28,14 @@ void MqttHandler::begin() {
 }
 
 void MqttHandler::updateServerConfig() {
-    String host = _configMgr.getServerHost();
+    _serverHost = _configMgr.getServerHost();
+    _serverHost.trim();
     uint16_t port = _configMgr.getServerPort();
+    if (port == 0) port = 1883;
 
-    if (host.length() > 0) {
-        _mqttClient.setServer(host.c_str(), port);
-        Serial.printf("[MqttHandler] 브로커 설정 적용: %s:%d\n", host.c_str(), port);
+    if (_serverHost.length() > 0) {
+        _mqttClient.setServer(_serverHost.c_str(), port);
+        Serial.printf("[MqttHandler] 브로커 설정 적용: %s:%d\n", _serverHost.c_str(), port);
     }
 }
 
@@ -67,7 +69,7 @@ void MqttHandler::loop() {
         _connectMgr.setServerConnected(false);
 
         unsigned long now = millis();
-        if (now - _lastReconnectAttempt > 5000) {
+        if (_lastReconnectAttempt == 0 || (now - _lastReconnectAttempt > 5000)) {
             _lastReconnectAttempt = now;
             if (connectToBroker()) {
                 _lastReconnectAttempt = 0;
@@ -80,8 +82,8 @@ void MqttHandler::loop() {
 }
 
 bool MqttHandler::connectToBroker() {
-    String serverHost = _configMgr.getServerHost();
-    if (serverHost.length() == 0) {
+    updateServerConfig();
+    if (_serverHost.length() == 0) {
         return false;
     }
 
@@ -119,7 +121,10 @@ bool MqttHandler::connectToBroker() {
         // 2. 구역(Zone) 일괄 제어 토픽 구독 (설정된 경우)
         if (_topicZoneCmd.length() > 0) {
             _mqttClient.subscribe(_topicZoneCmd.c_str());
+            _subscribedZone = _configMgr.getZone();
             Serial.println("[MqttHandler] 구역 구독 등록: " + _topicZoneCmd);
+        } else {
+            _subscribedZone = "";
         }
 
         // 3. ONLINE 상태 발행 (Retain: true) 및 초기 설정 요청 발행
