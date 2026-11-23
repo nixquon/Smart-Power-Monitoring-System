@@ -41,23 +41,24 @@ void ConnectManager::setupParameters(const String& failureReason) {
 
     // 포털 상단에 표시할 기존 설정(비밀번호 제외) 및 장애 사유 HTML
     String statusHtml = "<div style='background-color:#f8d7da; color:#721c24; padding:12px; border-radius:5px; margin-bottom:15px; border:1px solid #f5c6cb;'>";
-    statusHtml += "<h4 style='margin:0 0 8px 0;'>[ 장치 정보 및 연결 상태 ]</h4>";
-    statusHtml += "• <b>Device ID :</b> " + deviceId + "<br>";
-    statusHtml += "• <b>기존 SSID :</b> " + (currentSSID.length() > 0 ? currentSSID : "설정 없음") + "<br>";
-    statusHtml += "• <b>기존 Server:</b> " + currentHost + ":" + currentPort + "<hr style='border:0.5px solid #f5c6cb; margin:8px 0;'>";
-    
+    statusHtml += "<b>[ 장치 정보 및 연결 상태 ]</b><br>";
+    statusHtml += "- Device ID: " + deviceId + "<br>";
+    statusHtml += "- 기존 SSID: " + (currentSSID.length() > 0 ? currentSSID : "설정 없음") + "<br>";
+    statusHtml += "- 기존 Server: " + currentHost + ":" + currentPort + "<br><br>";
+
     if (failureReason.length() > 0) {
-        statusHtml += "<span style='color:#721c24; font-weight:bold;'><b>연결 실패:</b> " + failureReason + "</span>";
+        statusHtml += "<b>연결 실패: " + failureReason + "</b>";
     } else {
-        statusHtml += "<span>새로운 네트워크 및 서버 설정을 입력해 주세요.</span>";
+        statusHtml += "새로운 네트워크 및 서버 설정을 입력해 주세요.";
     }
     statusHtml += "</div>";
 
-    _customStatusInfo = new WiFiManagerParameter(statusHtml.c_str());
     _customServerHost = new WiFiManagerParameter("server_host", "MQTT Server Host/IP", currentHost.c_str(), 64);
     _customServerPort = new WiFiManagerParameter("server_port", "MQTT Server Port", currentPort.c_str(), 6);
 
-    _wm.addParameter(_customStatusInfo);
+    _wm.setCustomHeadElement("<meta charset='UTF-8'>");
+    _wm.setCustomHeadElement("<div style='background-color:#f8d7da; color:#721c24;padding:12px; border-radius:5px;margin-bottom:15px; border:1px solid #f5c6cb;'>");
+    _wm.setCustomHeadElement(statusHtml.c_str());
     _wm.addParameter(_customServerHost);
     _wm.addParameter(_customServerPort);
 
@@ -97,16 +98,24 @@ void ConnectManager::startCaptivePortal(const String& failureReason) {
     } else {
         uint32_t chipId = (uint32_t)ESP.getEfuseMac();
         char fallbackId[8];
-        snprintf(fallbackId, sizeof(fallbackId), "%06X", chipId & 0xFFFFFF);
+        snprintf(fallbackId, sizeof(fallbackId), "%06lX", chipId & 0xFFFFFF);
         portalSSID += String(fallbackId);
     }
 
     Serial.println("[ConnectManager] Captive Portal 오픈: " + portalSSID + " | 사유: " + failureReason);
 
+    // Non-blocking 모드에서 웹 서버가 빈 화면을 반환하는 버그 방지: AP_STA 모드 강제 전환
+    WiFi.disconnect(false);
+    WiFi.disconnect(false);
+    delay(100);
+    WiFi.mode(WIFI_AP_STA);
+
+    _wm.setConfigPortalBlocking(false);
     _wm.setConfigPortalTimeout(180);
-    if (_wm.startConfigPortal(portalSSID.c_str())) {
-        _state = ConnectionState::CAPTIVE_PORTAL_OPEN;
-    }
+    _wm.startConfigPortal(portalSSID.c_str());
+
+    // startConfigPortal()은 Non-blocking 모드에서 즉시 반환되므로 무조건 상태 전환
+    _state = ConnectionState::CAPTIVE_PORTAL_OPEN;
 }
 
 void ConnectManager::processCaptivePortal() {
