@@ -39,7 +39,7 @@ public:
 
     // 2. 원격 명령 처리 결과 응답 발행 -> devices/{device_id}/status (Retain: false)
     // action: "ACK" 또는 "NACK", command: "POWER_ON", "POWER_OFF", "CONFIG_UPDATED" 등
-    bool publishCommandAck(const String& action, const String& command, bool isPowerOn);
+    bool publishCommandAck(const String& action, const String& command, int powerState = -1);
 
     // 3. 현장 수동 버튼 조작 이벤트 발행 -> devices/{device_id}/status (Retain: false)
     bool publishManualPowerEvent(bool isPowerOn);
@@ -78,11 +78,11 @@ private:
     // 비동기 MQTT 브로커 접속 및 LWT(유언장) 등록, 토픽 구독 수행
     bool connectToBroker();
 
+    // 구역(Zone) 변경 시 기존 zone 토픽 구독 해제 및 새 zone 토픽 구독
+    bool updateZone(const String& newZone);
+
     // 브로커 접속 성공 직후 ONLINE 상태 발행 (Retain: true)
     void publishOnlineStatus();
-
-    // 구역(Zone) 변경 시 기존 zone 토픽 구독 해제 및 새 zone 토픽 구독
-    void updateZoneSubscription(const String& newZone);
 
     // PubSubClient 내부 메시지 수신 정적/멤버 핸들러
     void handleMessage(char* topic, byte* payload, unsigned int length);

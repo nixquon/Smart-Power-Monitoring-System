@@ -70,6 +70,9 @@ void MqttHandler::loop() {
 
         unsigned long now = millis();
         if (_lastReconnectAttempt == 0 || (now - _lastReconnectAttempt > 5000)) {
+            if (_lastReconnectAttempt != 0) {
+                Serial.println("[MqttHandler] 브로커 접속 끊김 -> 재접속 시도...");
+            }
             _lastReconnectAttempt = now;
             if (connectToBroker()) {
                 _lastReconnectAttempt = 0;
@@ -169,15 +172,18 @@ bool MqttHandler::publishTelemetry(float currentA, float powerW, float voltageV,
     return _mqttClient.publish(_topicTelemetry.c_str(), payload.c_str(), false);
 }
 
-bool MqttHandler::publishCommandAck(const String& action, const String& command, bool isPowerOn) {
+bool MqttHandler::publishCommandAck(const String& action, const String& command, int powerState) {
     if (!_mqttClient.connected()) return false;
 
     StaticJsonDocument<512> doc;
-    doc["device_id"]   = _configMgr.getDeviceId();
-    doc["status"]      = "ONLINE";
-    doc["action"]      = action;      // "ACK" or "NACK"
-    doc["command"]     = command;     // "POWER_ON", "POWER_OFF", "CONFIG_UPDATED"
-    doc["power_state"] = isPowerOn ? "ON" : "OFF";
+    doc["device_id"] = _configMgr.getDeviceId();
+    doc["status"]    = "ONLINE";
+    doc["action"]    = action;      // "ACK" or "NACK"
+    doc["command"]   = command;     // "POWER_ON", "POWER_OFF", "CONFIG_UPDATED"
+
+    if (powerState >= 0) {
+        doc["power_state"] = (powerState > 0) ? "ON" : "OFF";
+    }
 
     String currentZone = _configMgr.getZone();
     if (currentZone.length() > 0) {
@@ -217,8 +223,10 @@ bool MqttHandler::publishConfigRequest() {
     return _mqttClient.publish(_topicConfigReq.c_str(), payload.c_str(), false);
 }
 
-void MqttHandler::updateZoneSubscription(const String& newZone) {
-    if (!_mqttClient.connected()) return;
+bool MqttHandler::updateZone(const String& newZone) {
+    if (!_mqttClient.connected() || newZone.length() == 0) return false;
+    // 기존 장소와 동일하면 업데이트 Pass
+    if (newZone == _subscribedZone) return true;
 
     // 기존 구독 중인 구역 토픽이 있다면 구독 해제
     if (_subscribedZone.length() > 0) {
@@ -228,15 +236,19 @@ void MqttHandler::updateZoneSubscription(const String& newZone) {
     }
 
     // 새로운 구역 토픽 구독 등록
-    if (newZone.length() > 0) {
-        _topicZoneCmd = "zones/" + newZone + "/command";
-        _mqttClient.subscribe(_topicZoneCmd.c_str());
-        _subscribedZone = newZone;
-        Serial.println("[MqttHandler] 새 구역 구독 완료: " + _topicZoneCmd);
-    } else {
-        _topicZoneCmd = "";
+    String newTopicZoneCmd = "zones/" + newZone + "/command";
+    if (!_mqttClient.subscribe(newTopicZoneCmd.c_str())) {
+        Serial.println("[MqttHandler] 새 구역 구독 실패: " + newTopicZoneCmd);
         _subscribedZone = "";
+        return false;
     }
+
+    _subscribedZone = newZone;
+    _topicZoneCmd = newTopicZoneCmd;
+    Serial.println("[MqttHandler] 새 구역 구독 완료: " + _topicZoneCmd);
+
+    _configMgr.setZone(newZone);
+    return true;
 }
 
 void MqttHandler::handleMessage(char* topic, byte* payload, unsigned int length) {
@@ -263,50 +275,24 @@ void MqttHandler::handleMessage(char* topic, byte* payload, unsigned int length)
         if (_powerCmdCallback) {
             _powerCmdCallback(true);
         }
-        publishCommandAck("ACK", "POWER_ON", true);
+        publishCommandAck("ACK", "POWER_ON", 1);
     } 
     else if (command == "POWER_OFF") {
         if (_powerCmdCallback) {
             _powerCmdCallback(false);
         }
-        publishCommandAck("ACK", "POWER_OFF", false);
+        publishCommandAck("ACK", "POWER_OFF", 0);
     }
     // 2. 설정 업데이트 명령 처리 (CONFIG_UPDATE)
     else if (command == "CONFIG_UPDATE") {
         String target = doc["target"] | "";
         if (target == "ZONE") {
-            String oldZone = doc["old_zone"] | "";
-            String newZone = doc["new_zone"] | "";
-            String currentZone = _configMgr.getZone();
+            String zone = doc["zone"] | "";
 
-            // 기존 zone 일치 여부 검증 (초기 미할당 상태이거나 old_zone이 일치할 경우 허용)
-            if (currentZone.length() == 0 || currentZone == oldZone) {
-                _configMgr.setZone(newZone);
-                updateZoneSubscription(newZone);
-
-                // 응답 전용 JSON 발행 (현재 전원 상태는 별도 상태가 없으므로 기본/유지 처리)
-                StaticJsonDocument<512> ackDoc;
-                ackDoc["device_id"] = _configMgr.getDeviceId();
-                ackDoc["status"]    = "ONLINE";
-                ackDoc["action"]    = "ACK";
-                ackDoc["command"]   = "CONFIG_UPDATED";
-                ackDoc["zone"]      = newZone;
-
-                String ackPayload;
-                serializeJson(ackDoc, ackPayload);
-                _mqttClient.publish(_topicStatus.c_str(), ackPayload.c_str(), false);
+            if (updateZone(zone)) {
+                publishCommandAck("ACK", "CONFIG_UPDATED");
             } else {
-                // old_zone 불일치 시 NACK 응답
-                StaticJsonDocument<512> nackDoc;
-                nackDoc["device_id"] = _configMgr.getDeviceId();
-                nackDoc["status"]    = "ONLINE";
-                nackDoc["action"]    = "NACK";
-                nackDoc["command"]   = "CONFIG_UPDATED";
-                nackDoc["zone"]      = currentZone;
-
-                String nackPayload;
-                serializeJson(nackDoc, nackPayload);
-                _mqttClient.publish(_topicStatus.c_str(), nackPayload.c_str(), false);
+                publishCommandAck("NACK", "CONFIG_UPDATED");
             }
         }
     }
